@@ -8,7 +8,7 @@ import dns from 'dns';
 import authRoutes from './routes/authRoutes.js';
 import courseRoutes from './routes/courseRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
-
+import scheduleRoutes from './routes/scheduleRoutes.js';
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 dotenv.config();
 
@@ -22,6 +22,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/schedule', scheduleRoutes);
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ message: 'Server is healthy and running!' });
