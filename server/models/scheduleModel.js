@@ -20,6 +20,11 @@ const scheduleSchema = mongoose.Schema(
       type: Number,
       required: [true, 'Please provide how many hours to work on this day'],
     },
+    status: { 
+    type: String, 
+    enum: ['pending', 'completed', 'missed'], 
+    default: 'pending' 
+  },
     aiGenerated: {
       type: Boolean,
       default: true,

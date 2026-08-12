@@ -3,13 +3,16 @@ import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
 import AddCourseModal from '../components/AddCourseModal';
 import AddTaskModal from '../components/AddTaskModal';
-
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
+} from 'recharts'
 const Dashboard = () => {
   const { user, logoutUser } = useContext(AuthContext);
   
   const [courses, setCourses] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [schedule, setSchedule] = useState([]); // <-- New state for AI schedule
+  const [aiMessage, setAiMessage] = useState('');
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false); // <-- Loading state for AI
 
@@ -44,7 +47,28 @@ const Dashboard = () => {
 
   const handleCourseAdded = (newCourse) => setCourses((prev) => [...prev, newCourse]);
   const handleTaskAdded = (newTask) => setTasks((prev) => [...prev, newTask]);
+  const handleStatusUpdate = async (entryId, newStatus) => {
+    try {
+      // Use your existing getAuthHeaders() function!
+      const response = await axios.put(
+        `http://localhost:8000/api/schedule/${entryId}`,
+        { status: newStatus },
+        getAuthHeaders() 
+      );
 
+      const updatedEntry = response.data;
+
+      // Update local state immediately so UI refreshes without reload
+      setSchedule((prevSchedule) =>
+        prevSchedule.map((item) =>
+          item._id === updatedEntry._id ? updatedEntry : item
+        )
+      );
+    } catch (error) {
+      console.error('Failed to update entry status:', error);
+      alert('Failed to update status. Check your browser console for details.'); // Added this so it doesn't fail silently!
+    }
+  };
   const deleteCourse = async (id) => {
     if (!window.confirm('Are you sure you want to delete this course?')) return;
     try {
@@ -79,15 +103,48 @@ const Dashboard = () => {
   const generateAISchedule = async () => {
     setIsGenerating(true);
     setError('');
+    setAiMessage(''); // Clear old message
     try {
       const response = await axios.post('http://localhost:8000/api/schedule/generate', {}, getAuthHeaders());
-      setSchedule(response.data);
+      setSchedule(response.data.schedule);       // <-- Extract schedule array
+      setAiMessage(response.data.explanation);   // <-- Extract AI message
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to generate schedule. Make sure you have uncompleted tasks!');
+      setError(err.response?.data?.message || 'Failed to generate schedule.');
     } finally {
       setIsGenerating(false);
     }
   };
+  // --- NEW: Process data for the Recharts Bar Chart ---
+  const getChartData = () => {
+    const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dataMap = {};
+
+    schedule.forEach(entry => {
+      const date = new Date(entry.date);
+      // Format the label to look like "Mon 12"
+      const dayName = daysOfWeek[date.getDay()];
+      const formattedDate = `${dayName} ${date.getDate()}`;
+
+      // Initialize the day if it doesn't exist yet
+      if (!dataMap[formattedDate]) {
+        dataMap[formattedDate] = { name: formattedDate, Completed: 0, Pending: 0, Missed: 0 };
+      }
+
+      // Add the hours to the correct status category
+      if (entry.status === 'completed') {
+        dataMap[formattedDate].Completed += entry.allocatedHours;
+      } else if (entry.status === 'missed') {
+        dataMap[formattedDate].Missed += entry.allocatedHours;
+      } else {
+        dataMap[formattedDate].Pending += entry.allocatedHours;
+      }
+    });
+
+    // Convert our grouped object back into an array for Recharts
+    return Object.values(dataMap);
+  };
+
+  const chartData = getChartData();
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -174,11 +231,49 @@ const Dashboard = () => {
             </ul>
           )}
         </div>
-      </div>
+      </div> {/* <-- End of Courses & Tasks Grid */}
 
-      {/* NEW: AI Schedule Section */}
+      {/* --- NEW: ANALYTICS BAR CHART --- */}
+      {schedule.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-md mb-8 border border-gray-100">
+          <h2 className="text-xl font-bold text-gray-800 mb-6">📊 Weekly Workload</h2>
+          <div className="h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 12 }} />
+                <Tooltip 
+                  cursor={{ fill: '#F3F4F6' }}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                
+                <Bar dataKey="Completed" stackId="a" fill="#10B981" radius={[0, 0, 4, 4]} />
+                <Bar dataKey="Pending" stackId="a" fill="#F59E0B" />
+                <Bar dataKey="Missed" stackId="a" fill="#EF4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+      {/* --------------------------------- */}
+
+      {/* AI Schedule Section */}
       <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-purple-500">
         <h2 className="text-2xl font-bold text-gray-800 mb-6">📅 Your AI Study Plan</h2>
+        
+        {/* AI EXPLANATION BOX */}
+        {aiMessage && (
+          <div className="mb-6 p-4 bg-gradient-to-r from-purple-100 to-indigo-50 border border-purple-200 rounded-lg flex items-start gap-4 shadow-sm">
+            <div className="text-3xl">🤖</div>
+            <div>
+              <h4 className="font-bold text-purple-900 mb-1">AI Insight</h4>
+              <p className="text-purple-800 text-sm font-medium leading-relaxed">{aiMessage}</p>
+            </div>
+          </div>
+        )}
+
         {schedule.length === 0 ? (
           <p className="text-gray-500 italic text-center p-8 bg-gray-50 rounded">
             No schedule generated yet. Add some tasks and click the "✨ Generate Smart Schedule" button above!
@@ -186,18 +281,60 @@ const Dashboard = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {schedule.map((entry) => (
-              <div key={entry._id} className="p-4 border rounded-lg bg-purple-50 flex flex-col justify-between">
+              <div 
+                key={entry._id} 
+                className={`p-4 border rounded-xl flex flex-col justify-between shadow-sm transition-all ${
+                  entry.status === 'completed' ? 'bg-gray-50 opacity-60' : 'bg-purple-50'
+                }`}
+              >
+                {/* Top: Date & Status Badge */}
                 <div>
-                  <div className="flex justify-between items-center mb-2">
+                  <div className="flex justify-between items-center mb-3">
                     <span className="font-bold text-purple-800 bg-purple-200 px-2 py-1 rounded text-sm">
                       {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                     </span>
-                    <span className="text-sm font-bold text-gray-600">{entry.allocatedHours} hours</span>
+                    
+                    {/* Dynamic Status Badge */}
+                    {entry.status === 'completed' && (
+                      <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-md">✓ Completed</span>
+                    )}
+                    {entry.status === 'missed' && (
+                      <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-1 rounded-md">✕ Missed</span>
+                    )}
+                    {(entry.status === 'pending' || !entry.status) && (
+                      <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-md">Pending</span>
+                    )}
                   </div>
-                  <h3 className="font-bold text-gray-800 text-lg">{entry.task?.title || 'Deleted Task'}</h3>
+
+                  <h3 className={`font-bold text-lg mb-1 ${entry.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                    {entry.task?.title || 'Deleted Task'}
+                  </h3>
+                  <p className="text-sm font-bold text-gray-600">{entry.allocatedHours} {entry.allocatedHours === 1 ? 'hour' : 'hours'}</p>
                 </div>
+
+                {/* Bottom: Priority & Action Buttons */}
                 <div className="mt-4 pt-3 border-t border-purple-200 flex justify-between items-center">
                   <span className="text-xs text-purple-600 font-bold uppercase">{entry.task?.priority || 'N/A'} Priority</span>
+                  
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    {entry.status !== 'completed' && (
+                      <button
+                        onClick={() => handleStatusUpdate(entry._id, 'completed')}
+                        className="px-2 py-1 text-xs font-bold text-white bg-emerald-600 rounded hover:bg-emerald-700 transition shadow-sm"
+                      >
+                        ✓ Done
+                      </button>
+                    )}
+                    {entry.status !== 'missed' && entry.status !== 'completed' && (
+                      <button
+                        onClick={() => handleStatusUpdate(entry._id, 'missed')}
+                        className="px-2 py-1 text-xs font-bold text-rose-600 border border-rose-200 bg-white rounded hover:bg-rose-50 transition shadow-sm"
+                      >
+                        ✕ Missed
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
