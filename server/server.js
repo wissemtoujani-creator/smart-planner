@@ -15,7 +15,13 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173', 
+    process.env.FRONTEND_URL // <-- We will set this in Render!
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Mount the Auth Routes

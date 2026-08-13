@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
-import axios from 'axios';
+import API from '../api';
 import { AuthContext } from '../context/AuthContext';
 import AddCourseModal from '../components/AddCourseModal';
 import AddTaskModal from '../components/AddTaskModal';
@@ -15,10 +15,16 @@ const Dashboard = () => {
   const [aiMessage, setAiMessage] = useState('');
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false); // <-- Loading state for AI
-
+  const [toast, setToast] = useState({ message: '', type: '' }); // type: 'success' | 'error'
+  const [updatingId, setUpdatingId] = useState(null); // Tracks which specific entry is updating
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast({ message: '', type: '' });
+    }, 3500); // Auto-hide after 3.5 seconds
+  };
   const getAuthHeaders = () => ({
     headers: {
       Authorization: `Bearer ${user.token}`,
@@ -30,9 +36,9 @@ const Dashboard = () => {
       try {
         // Fetch all three datasets concurrently
         const [courseRes, taskRes, scheduleRes] = await Promise.all([
-          axios.get('http://localhost:8000/api/courses', getAuthHeaders()),
-          axios.get('http://localhost:8000/api/tasks', getAuthHeaders()),
-          axios.get('http://localhost:8000/api/schedule', getAuthHeaders()) // <-- Fetch schedule
+          API.get('/api/courses', getAuthHeaders()),
+          API.get('/api/tasks', getAuthHeaders()),
+          API.get('/api/schedule', getAuthHeaders())
         ]);
         setCourses(courseRes.data);
         setTasks(taskRes.data);
@@ -48,31 +54,34 @@ const Dashboard = () => {
   const handleCourseAdded = (newCourse) => setCourses((prev) => [...prev, newCourse]);
   const handleTaskAdded = (newTask) => setTasks((prev) => [...prev, newTask]);
   const handleStatusUpdate = async (entryId, newStatus) => {
+    setUpdatingId(entryId); // Disable this card's buttons & show spinner
     try {
-      // Use your existing getAuthHeaders() function!
-      const response = await axios.put(
-        `http://localhost:8000/api/schedule/${entryId}`,
+      const response = await API.put(
+        `/api/schedule/${entryId}`,
         { status: newStatus },
-        getAuthHeaders() 
+        getAuthHeaders()
       );
 
       const updatedEntry = response.data;
 
-      // Update local state immediately so UI refreshes without reload
       setSchedule((prevSchedule) =>
         prevSchedule.map((item) =>
           item._id === updatedEntry._id ? updatedEntry : item
         )
       );
+
+      showToast(`Status updated to "${newStatus}"!`, 'success');
     } catch (error) {
       console.error('Failed to update entry status:', error);
-      alert('Failed to update status. Check your browser console for details.'); // Added this so it doesn't fail silently!
+      showToast('Failed to update status. Please try again.', 'error');
+    } finally {
+      setUpdatingId(null); // Re-enable buttons
     }
   };
   const deleteCourse = async (id) => {
     if (!window.confirm('Are you sure you want to delete this course?')) return;
     try {
-      await axios.delete(`http://localhost:8000/api/courses/${id}`, getAuthHeaders());
+      await API.delete('/api/courses/${id}', getAuthHeaders());
       setCourses(courses.filter((course) => course._id !== id));
     } catch (err) {
       console.error('Failed to delete course', err);
@@ -82,7 +91,7 @@ const Dashboard = () => {
   const deleteTask = async (id) => {
     if (!window.confirm('Are you sure you want to delete this task?')) return;
     try {
-      await axios.delete(`http://localhost:8000/api/tasks/${id}`, getAuthHeaders());
+      await API.delete(`/api/tasks/${id}`, getAuthHeaders());
       setTasks(tasks.filter((task) => task._id !== id));
     } catch (err) {
       console.error('Failed to delete task', err);
@@ -92,7 +101,7 @@ const Dashboard = () => {
   const toggleTaskComplete = async (task) => {
     try {
       const updatedData = { completed: !task.completed };
-      const response = await axios.put(`http://localhost:8000/api/tasks/${task._id}`, updatedData, getAuthHeaders());
+      const response = await API.put(`/api/tasks/${task._id}`, updatedData, getAuthHeaders());
       setTasks(tasks.map((t) => (t._id === task._id ? response.data : t)));
     } catch (err) {
       console.error('Failed to update task', err);
@@ -103,13 +112,16 @@ const Dashboard = () => {
   const generateAISchedule = async () => {
     setIsGenerating(true);
     setError('');
-    setAiMessage(''); // Clear old message
+    setAiMessage('');
     try {
-      const response = await axios.post('http://localhost:8000/api/schedule/generate', {}, getAuthHeaders());
-      setSchedule(response.data.schedule);       // <-- Extract schedule array
-      setAiMessage(response.data.explanation);   // <-- Extract AI message
+      const response = await API.post('/api/schedule/generate', {}, getAuthHeaders());
+      setSchedule(response.data.schedule);
+      setAiMessage(response.data.explanation);
+      showToast('New AI Study Plan generated!', 'success');
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to generate schedule.');
+      const errMsg = err.response?.data?.message || 'Failed to generate schedule.';
+      setError(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setIsGenerating(false);
     }
@@ -145,9 +157,31 @@ const Dashboard = () => {
   };
 
   const chartData = getChartData();
+// --- NEW: Calculate Summary Stats ---
+  const completedStudyHours = schedule
+    .filter(entry => entry.status === 'completed')
+    .reduce((sum, entry) => sum + entry.allocatedHours, 0);
 
+  const pendingStudyHours = schedule
+    .filter(entry => entry.status !== 'completed' && entry.status !== 'missed')
+    .reduce((sum, entry) => sum + entry.allocatedHours, 0);
+
+  const completedTasksCount = tasks.filter(task => task.completed).length;
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-8 max-w-6xl mx-auto relative">
+      
+      {/* --- FLOATING TOAST NOTIFICATION --- */}
+      {toast.message && (
+        <div 
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl text-white font-semibold transition-all transform animate-bounce ${
+            toast.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'
+          }`}
+        >
+          <span>{toast.type === 'error' ? '⚠️' : '🎉'}</span>
+          <span>{toast.message}</span>
+        </div>
+      )}
+      {/* ---------------------------------- */}
       {/* Header Section */}
       <div className="flex justify-between items-center mb-8">
         <div>
@@ -159,10 +193,20 @@ const Dashboard = () => {
             onClick={generateAISchedule}
             disabled={isGenerating}
             className={`${
-              isGenerating ? 'bg-purple-400' : 'bg-purple-600 hover:bg-purple-700'
+              isGenerating ? 'bg-purple-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'
             } text-white font-bold px-4 py-2 rounded transition shadow-md flex items-center gap-2`}
           >
-            {isGenerating ? '✨ AI is thinking...' : '✨ Generate Smart Schedule'}
+            {isGenerating ? (
+              <>
+                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>✨ AI is thinking...</span>
+              </>
+            ) : (
+              '✨ Generate Smart Schedule'
+            )}
           </button>
           <button
             onClick={logoutUser}
@@ -232,6 +276,37 @@ const Dashboard = () => {
           )}
         </div>
       </div> {/* <-- End of Courses & Tasks Grid */}
+
+      {/* --- NEW: SUMMARY STAT CARDS --- */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        {/* Card 1: Hours Studied */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-emerald-100 border-l-4 border-l-emerald-500 flex flex-col justify-center transition-transform hover:-translate-y-1">
+          <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Hours Studied</h3>
+          <p className="text-3xl font-black text-emerald-600">
+            {completedStudyHours} <span className="text-lg font-medium text-gray-400">hrs</span>
+          </p>
+        </div>
+
+        {/* Card 2: Pending Hours */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-amber-100 border-l-4 border-l-amber-500 flex flex-col justify-center transition-transform hover:-translate-y-1">
+          <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Pending Hours</h3>
+          <p className="text-3xl font-black text-amber-500">
+            {pendingStudyHours} <span className="text-lg font-medium text-gray-400">hrs</span>
+          </p>
+        </div>
+
+        {/* Card 3: Tasks Completed */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-blue-100 border-l-4 border-l-blue-500 flex flex-col justify-center transition-transform hover:-translate-y-1">
+          <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Tasks Completed</h3>
+          <p className="text-3xl font-black text-blue-600">
+            {completedTasksCount} <span className="text-lg font-medium text-gray-400">tasks</span>
+          </p>
+        </div>
+      </div>
+      {/* ------------------------------- */}
+
+      {/* --- NEW: ANALYTICS BAR CHART --- */}
+      {/* (Your existing chart code remains here) */}
 
       {/* --- NEW: ANALYTICS BAR CHART --- */}
       {schedule.length > 0 && (
@@ -320,16 +395,26 @@ const Dashboard = () => {
                   <div className="flex gap-2">
                     {entry.status !== 'completed' && (
                       <button
+                        disabled={updatingId === entry._id}
                         onClick={() => handleStatusUpdate(entry._id, 'completed')}
-                        className="px-2 py-1 text-xs font-bold text-white bg-emerald-600 rounded hover:bg-emerald-700 transition shadow-sm"
+                        className={`px-2 py-1 text-xs font-bold text-white rounded transition shadow-sm ${
+                          updatingId === entry._id 
+                            ? 'bg-emerald-300 cursor-not-allowed' 
+                            : 'bg-emerald-600 hover:bg-emerald-700'
+                        }`}
                       >
-                        ✓ Done
+                        {updatingId === entry._id ? 'Updating...' : '✓ Done'}
                       </button>
                     )}
                     {entry.status !== 'missed' && entry.status !== 'completed' && (
                       <button
+                        disabled={updatingId === entry._id}
                         onClick={() => handleStatusUpdate(entry._id, 'missed')}
-                        className="px-2 py-1 text-xs font-bold text-rose-600 border border-rose-200 bg-white rounded hover:bg-rose-50 transition shadow-sm"
+                        className={`px-2 py-1 text-xs font-bold text-rose-600 border border-rose-200 bg-white rounded transition shadow-sm ${
+                          updatingId === entry._id 
+                            ? 'opacity-50 cursor-not-allowed' 
+                            : 'hover:bg-rose-50'
+                        }`}
                       >
                         ✕ Missed
                       </button>
