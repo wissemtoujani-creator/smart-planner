@@ -59,9 +59,11 @@ Given the following list of tasks, construct an optimized day-by-day study sched
 
 Rules:
 1. Spread out work reasonably across days (max ~4-6 hours total per day).
-2. Respect deadlines and prioritize tasks due sooner or marked high priority.
-3. Every task must have its "remainingHours" fully allocated across one or more dates before its deadline.
-4. Return ONLY valid JSON adhering strictly to this schema:
+2. When writing your "explanation", you MUST refer to tasks by their "title".
+3. Respect deadlines and prioritize tasks due sooner or marked high priority.
+4. Every task must have its "remainingHours" fully allocated across one or more dates before its deadline.
+5. NEVER show, print, or output raw task IDs (e.g., 64b2c...) in the explanation.
+6. Return ONLY valid JSON adhering strictly to this schema:
 
 {
   "explanation": "A friendly 1-2 sentence explanation speaking directly to the user about why you ordered their schedule this way (e.g. mentioning priorities or deadlines).",
